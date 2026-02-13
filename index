@@ -1,0 +1,261 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  Wand2, 
+  Copy, 
+  Trash2, 
+  Check, 
+  AlertCircle, 
+  RefreshCcw, 
+  ChevronRight
+} from 'lucide-react';
+
+/**
+ * THAI TEXT NORMALIZATION LOGIC
+ * Fixes common PDF encoding issues like:
+ * 1. Misplaced vowels (Sra-Am, Sra-I, etc.)
+ * 2. Tone mark stacking order
+ * 3. Zero-width spaces and control characters
+ */
+const normalizeThaiText = (text) => {
+  if (!text) return "";
+
+  let result = text;
+
+  // 1. Remove common PDF artifacts
+  result = result.replace(/[\u200B-\u200D\uFEFF]/g, ''); // Zero width spaces
+  result = result.replace(/\u00A0/g, ' '); // Non-breaking space
+
+  // 2. Fix Character Ordering (Thai Unicode standard requires: Consonant + Vowel + Tone)
+  const toneMarks = '[\u0E48-\u0E4B]'; // Mai Ek, Tho, Tri, Chattawa
+  const upperVowels = '[\u0E31\u0E34-\u0E37\u0E47]'; // Mai Han-Akat, Sra I, Ii, Ue, Uee, Mai Tai Khu
+  
+  const misplacedPattern = new RegExp(`(${toneMarks})(${upperVowels})`, 'g');
+  result = result.replace(misplacedPattern, '$2$1');
+
+  // 3. Fix Sra-Am (\u0E33) decomposition issues
+  result = result.replace(/(\u0E4D)(\u0E48|\u0E49|\u0E4A|\u0E4B)/g, '$1$2'); 
+  result = result.replace(/(\u0E48|\u0E49|\u0E4A|\u0E4B)(\u0E4D)/g, '$2$1'); 
+
+  // 4. Normalize redundant characters
+  result = result.replace(/([\u0E30-\u0E3A\u0E47-\u0E4E])\1+/g, '$1');
+
+  return result.trim();
+};
+
+const App = () => {
+  const [inputText, setInputText] = useState('');
+  const [outputText, setOutputText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [mode, setMode] = useState('smart'); // 'fast' (Rule-based) or 'smart' (AI-based)
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [error, setError] = useState(null);
+
+  const apiKey = ""; 
+
+  const handleFixText = async () => {
+    if (!inputText.trim()) return;
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      if (mode === 'fast') {
+        const fixed = normalizeThaiText(inputText);
+        setOutputText(fixed);
+      } else {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `You are a Thai language expert. The following Thai text was copied from a PDF and contains corrupted characters, misplaced vowels, and incorrect tone mark ordering. 
+                
+                Please:
+                1. Reconstruct the text into grammatically correct and readable Thai.
+                2. Fix the character stacking order.
+                3. Do not translate it. 
+                4. Maintain the original meaning and structure.
+                5. Return ONLY the corrected text.
+
+                Corrupted Text:
+                ${inputText}`
+              }]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 8000,
+            }
+          })
+        });
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+        
+        const result = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        setOutputText(result || "Error: No output received.");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to fix text. Using fallback normalization...");
+      setOutputText(normalizeThaiText(inputText));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const copyToClipboard = () => {
+    try {
+      const el = document.createElement('textarea');
+      el.value = outputText;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy', err);
+    }
+  };
+
+  const clearAll = () => {
+    setInputText('');
+    setOutputText('');
+    setError(null);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100 flex flex-col">
+      <nav className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-indigo-600 p-2 rounded-lg">
+              <Wand2 className="text-white w-5 h-5" />
+            </div>
+            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
+              ThaiPDF Fixer
+            </h1>
+          </div>
+          <div className="flex items-center gap-4 text-sm text-slate-500">
+            <span className="hidden md:inline">Research and Data Analysis</span>
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto p-4 md:p-8 flex-1 w-full">
+        <div className="mb-8 max-w-2xl">
+          <h2 className="text-3xl font-extrabold text-slate-900 mb-2">Restore broken Thai text</h2>
+          <p className="text-slate-600 text-lg">
+            Automatically correct misplaced vowels, missing tone marks, and character ordering issues caused by PDF encoding.
+          </p>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button 
+              onClick={() => setMode('smart')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'smart' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              AI Deep Fix (Best)
+            </button>
+            <button 
+              onClick={() => setMode('fast')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'fast' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Quick Rule-Based
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={clearAll}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear
+            </button>
+            <button 
+              onClick={handleFixText}
+              disabled={isProcessing || !inputText}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold shadow-lg transition-all ${
+                isProcessing || !inputText 
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:scale-[1.02] active:scale-95'
+              }`}
+            >
+              {isProcessing ? (
+                <RefreshCcw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Wand2 className="w-4 h-4" />
+              )}
+              {isProcessing ? "Processing..." : "Fix Text Now"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-280px)] min-h-[400px]">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between px-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Source Text (Corrupted)</label>
+              <span className="text-xs text-slate-400">{inputText.length.toLocaleString()} characters</span>
+            </div>
+            <div className="flex-1 relative group">
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Paste your broken Thai text here..."
+                className="w-full h-full p-6 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none resize-none transition-all text-lg leading-relaxed text-slate-700 placeholder:text-slate-300"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between px-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fixed Result</label>
+              {outputText && (
+                <button 
+                  onClick={copyToClipboard}
+                  className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${copySuccess ? 'text-green-600' : 'text-indigo-600 hover:text-indigo-800'}`}
+                >
+                  {copySuccess ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copySuccess ? "Copied!" : "Copy result"}
+                </button>
+              )}
+            </div>
+            <div className="flex-1 relative">
+              <div className={`w-full h-full p-6 bg-slate-900 rounded-2xl border border-slate-800 text-lg leading-relaxed overflow-auto transition-all ${isProcessing ? 'opacity-50' : 'opacity-100'}`}>
+                {outputText ? (
+                  <p className="text-indigo-50 whitespace-pre-wrap">{outputText}</p>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-3">
+                    <ChevronRight className="w-8 h-8 opacity-20" />
+                    <p className="text-sm font-medium">Click "Fix Text" to generate result</p>
+                  </div>
+                )}
+              </div>
+              
+              {isProcessing && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 rounded-2xl backdrop-blur-[1px]">
+                   <div className="flex flex-col items-center gap-4 bg-white p-6 rounded-2xl shadow-2xl">
+                      <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+                      <p className="text-sm font-bold text-slate-700">Reconstructing Linguistics...</p>
+                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {error && (
+        <div className="fixed bottom-6 right-6 bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4">
+          <AlertCircle className="w-5 h-5" />
+          <span className="font-medium text-sm">{error}</span>
+          <button onClick={() => setError(null)} className="ml-2 hover:opacity-70">×</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
